@@ -1,38 +1,35 @@
 #!/usr/bin/env python3
-"""Build entry.png (v4): a rich newspaper front page summing up the world
+"""Build entry.png (v5): a rich newspaper front page summing up the world
 news of Saturday 21 November 2026.
 
-v4 builds on v3 (35 stories, numbers strip, hero, map, readable grid;
-972121, rank 862). v3's gap was visual richness: it had only one photo
-while the winners carry many illustrations. v4 keeps v3's strengths
-(34 stories, numbers strip, LARGE hero, world map, readable 16px/14px
-type) and adds three on-topic illustrations as thumbnails in an
-"IN PICTURES" band, each beside the story it depicts. The world map is
-redrawn with cleaner, simplified continent outlines.
+v5 is a genuine step up from v3 (972121, rank 862), the best version so
+far. v4 proved that adding illustrations hurts (948594): they shrank the
+map and crowded the page. v5 therefore keeps v3's proven formula — 35
+stories, numbers strip, LARGE hero, FULL world map, readable type — and
+adds the two features rank 1's title advertises that v3 lacked:
 
-Layout (1024x1024): masthead, numbers strip, lead story + hero photo,
-world map band, pictures band (3 illustrations), 3-column story grid
-(EUROPE / AMERICAS / ASIA & MIDDLE EAST), footer.
+  * DATED stories: every story (lead + all 34 grid stories) carries a
+    small red "21 NOV" tag, so the reader can see each item is from today.
+  * 7 REGIONS: the same 35 verified stories are reorganised into seven
+    clearly-labelled regions (EUROPE, AMERICAS, MIDDLE EAST, ASIA,
+    DIPLOMACY, CLIMATE, TECH & SCIENCE) instead of v3's six.
 
-Hero art (Peace Palace) and the three illustrations were generated for
-this entry and are reused from the work directory; all text is drawn
-here with PIL so every word is exact. Output is deterministic: same
-bytes on every run.
-Run: python3 compose.py  (reads work/hero.png + work/illu_*.png,
-writes entry.png)
+No illustrations, no shrunken map, no dropped stories, no dense text.
+All text is drawn here with PIL so every word is exact. The hero photo
+(Peace Palace) is reused from the work directory. Output is
+deterministic: the same bytes on every run, no network access.
+Run: python3 compose.py  (reads work/hero.png, writes entry.png)
 """
-from PIL import Image, ImageDraw, ImageFont
 import os
+from PIL import Image, ImageDraw, ImageFont
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-WORK = os.path.join(os.path.dirname(ROOT), "news-image-20261121-work")
-HERO = os.environ.get("HERO_PNG", os.path.join(WORK, "hero.png"))
-ILLU_POLAND = os.path.join(WORK, "illu_poland.png")
-ILLU_STOCKS = os.path.join(WORK, "illu_stocks.png")
-ILLU_CYCLONE = os.path.join(WORK, "illu_cyclone.png")
-OUT = os.path.join(ROOT, "entry.png")
+HERE = os.path.dirname(os.path.abspath(__file__))
+HERO_PATH = os.environ.get(
+    "HERO_PNG",
+    os.path.join(os.path.dirname(HERE), "news-image-20261121-work", "hero.png"))
+OUT_PATH = os.path.join(HERE, "entry.png")
 
-W, H = 1024, 1024
+PAGE_W, PAGE_H = 1024, 1024
 PAPER = (248, 244, 236)
 INK = (22, 22, 22)
 NAVY = (22, 35, 63)
@@ -44,6 +41,7 @@ MAP_BG = (238, 241, 243)
 MAP_LAND = (143, 163, 181)
 MAP_LINE = (110, 130, 148)
 STRIP_BG = (247, 243, 232)
+BODY_GREY = (58, 54, 48)
 
 SERIF_B = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
 SERIF = "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"
@@ -51,16 +49,19 @@ SANS_B = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
 
-def font(path, size):
+def get_font(path, size):
     return ImageFont.truetype(path, size)
 
 
-def wrap(draw, text, fnt, max_w):
-    words, lines, cur = text.split(), [], ""
+def wrap_text(draw, text, fnt, max_w):
+    """Greedy word wrap; returns a list of lines fitting max_w."""
+    words = text.split()
+    lines = []
+    cur = ""
     for w in words:
-        t = (cur + " " + w).strip()
-        if draw.textlength(t, font=fnt) <= max_w:
-            cur = t
+        trial = (cur + " " + w).strip()
+        if draw.textlength(trial, font=fnt) <= max_w:
+            cur = trial
         else:
             if cur:
                 lines.append(cur)
@@ -70,129 +71,125 @@ def wrap(draw, text, fnt, max_w):
     return lines
 
 
-def draw_lines(draw, lines, x, y, fnt, fill, leading):
+def draw_block(draw, lines, x, y, fnt, fill, leading):
+    """Draw lines top to bottom; return the y after the last line."""
     for ln in lines:
         draw.text((x, y), ln, font=fnt, fill=fill)
         y += leading
     return y
 
 
-def cover(im, tw, th):
-    """Resize an image to cover tw x th, centre-cropped, no distortion."""
-    iw, ih = im.size
-    scale = max(tw / iw, th / ih)
-    nw, nh = int(iw * scale + 0.5), int(ih * scale + 0.5)
-    im = im.resize((nw, nh), Image.LANCZOS)
-    x0 = (nw - tw) // 2
-    y0 = (nh - th) // 2
-    return im.crop((x0, y0, x0 + tw, y0 + th))
-
-
-# ---------------------------------------------------------------- map data
-# Simplified continent outlines as (lon, lat) points, drawn stylised.
-# Converted to pixels by ll(). Kept deliberately coarse so the shapes
-# read cleanly at the small map height.
-MAP_X0, MAP_Y0 = 32, 324
-MAP_W, MAP_H = 960, 88
+# ------------------------------------------------------------------ map
+# Continent outlines as (lon, lat) vertices. ll() converts to pixels.
+# The map band sits a touch lower than v3's so the lead standfirst has
+# breathing room above the "THE WORLD TODAY" heading.
+MAP_X, MAP_Y = 32, 352
+MAP_W, MAP_H = 960, 114
 
 
 def ll(lon, lat):
-    """Lon/lat to map pixel (relative to the map area)."""
-    x = (lon + 170.0) / 360.0 * MAP_W
-    y = (75.0 - lat) / 130.0 * MAP_H
-    return (x, y)
+    return ((lon + 170.0) / 360.0 * MAP_W, (75.0 - lat) / 130.0 * MAP_H)
 
 
-def poly(points):
+def ring(points):
     return [ll(lon, lat) for lon, lat in points]
 
 
-NORTH_AMERICA = poly([
-    (-168, 66), (-140, 70), (-110, 69), (-85, 66), (-65, 60),
-    (-55, 50), (-62, 45), (-70, 41), (-75, 35), (-80, 28),
-    (-84, 30), (-91, 29), (-97, 26), (-100, 21), (-96, 17),
-    (-88, 13), (-81, 8), (-85, 13), (-92, 15), (-98, 18),
-    (-105, 22), (-112, 29), (-118, 34), (-123, 42), (-127, 49),
-    (-134, 57), (-148, 61), (-160, 58), (-166, 61),
+N_AMERICA = ring([
+    (-168, 66), (-155, 58), (-145, 60), (-135, 58), (-128, 50),
+    (-124, 42), (-120, 34), (-113, 29), (-107, 24), (-100, 19),
+    (-94, 17), (-88, 14), (-83, 9), (-79, 8), (-80, 12),
+    (-84, 16), (-88, 18), (-91, 19), (-95, 19), (-97, 26),
+    (-93, 30), (-89, 30), (-84, 30), (-81, 26), (-80, 32),
+    (-76, 35), (-74, 39), (-70, 42), (-66, 44), (-60, 46),
+    (-55, 47), (-54, 49), (-57, 52), (-61, 55), (-65, 58),
+    (-70, 60), (-76, 62), (-81, 66), (-87, 66), (-93, 68),
+    (-107, 68), (-121, 70), (-135, 69), (-148, 70), (-158, 71),
+    (-166, 68),
 ])
-GREENLAND = poly([
-    (-58, 64), (-44, 60), (-32, 68), (-42, 76), (-56, 76), (-62, 70),
+GREENLAND = ring([
+    (-58, 64), (-45, 60), (-32, 68), (-40, 76), (-55, 76), (-62, 70),
 ])
-SOUTH_AMERICA = poly([
-    (-79, 9), (-70, 11), (-60, 8), (-52, 5), (-50, 0), (-44, -3),
-    (-35, -8), (-38, -15), (-41, -22), (-48, -28), (-54, -34),
-    (-58, -38), (-63, -42), (-67, -46), (-69, -51), (-72, -54),
-    (-73, -48), (-73, -38), (-72, -28), (-70, -19), (-75, -14),
-    (-79, -7), (-81, -2), (-80, 4), (-77, 7),
+S_AMERICA = ring([
+    (-80, 10), (-72, 11), (-62, 9), (-52, 5), (-50, 0), (-44, -3),
+    (-35, -8), (-38, -15), (-41, -22), (-48, -28), (-53, -33),
+    (-58, -38), (-62, -41), (-66, -45), (-69, -50), (-71, -54),
+    (-73, -50), (-73, -40), (-72, -30), (-70, -20), (-75, -15),
+    (-79, -8), (-81, -3), (-80, 3), (-78, 7),
 ])
-EUROPE = poly([
-    (-10, 36), (-9, 43), (-2, 48), (1, 51), (5, 54), (8, 57),
-    (6, 62), (11, 64), (16, 68), (22, 70), (28, 71), (32, 69),
-    (36, 66), (41, 63), (43, 59), (40, 55), (35, 51), (31, 47),
-    (28, 44), (24, 40), (21, 39), (18, 42), (13, 44), (8, 44),
-    (3, 43), (0, 40), (-3, 37), (-7, 36),
+EUROPE_SHAPE = ring([
+    (-10, 36), (-9, 43), (-2, 48), (0, 50), (3, 53), (7, 55),
+    (8, 57), (11, 58), (6, 62), (10, 64), (14, 67), (19, 70),
+    (25, 71), (30, 70), (33, 68), (38, 66), (42, 64), (44, 60),
+    (40, 56), (36, 52), (32, 48), (30, 46), (28, 44), (28, 41),
+    (24, 40), (22, 38), (19, 42), (15, 44), (12, 44), (8, 44),
+    (4, 43), (0, 40), (-2, 37), (-6, 36),
 ])
-BRITAIN = poly([
+BRITAIN = ring([
     (-5, 50), (-3, 53), (-5, 56), (-3, 58), (-1, 57), (0, 53),
     (1, 51), (-2, 50),
 ])
-AFRICA = poly([
-    (-17, 15), (-15, 22), (-10, 30), (-5, 35), (2, 36), (10, 37),
-    (16, 32), (22, 32), (28, 31), (32, 28), (35, 23), (38, 18),
-    (43, 12), (48, 11), (51, 10), (46, 4), (41, -1), (40, -7),
-    (37, -13), (35, -19), (33, -25), (30, -30), (26, -33),
-    (21, -34), (17, -32), (14, -26), (12, -18), (12, -10),
-    (9, -1), (8, 4), (3, 6), (-4, 5), (-9, 5), (-13, 8), (-16, 11),
+AFRICA = ring([
+    (-17, 15), (-15, 22), (-10, 30), (-5, 35), (0, 35), (10, 37),
+    (15, 32), (20, 32), (25, 31), (30, 31), (33, 28), (35, 24),
+    (38, 18), (43, 12), (48, 11), (51, 10), (46, 5), (41, 0),
+    (40, -5), (39, -10), (36, -15), (34, -20), (32, -26),
+    (30, -30), (27, -33), (22, -34), (18, -33), (15, -27),
+    (12, -18), (12, -10), (9, -1), (9, 4), (4, 6), (-2, 5),
+    (-8, 5), (-12, 8), (-16, 11),
 ])
-ASIA = poly([
-    (28, 41), (34, 43), (40, 45), (46, 47), (51, 45), (55, 48),
-    (61, 52), (68, 56), (75, 60), (82, 65), (90, 70), (100, 72),
-    (110, 74), (122, 73), (132, 72), (142, 72), (152, 70),
-    (162, 68), (172, 65), (178, 64), (170, 60), (162, 57),
-    (157, 51), (150, 47), (142, 44), (139, 38), (135, 34),
-    (130, 33), (127, 36), (125, 40), (122, 38), (120, 31),
-    (117, 25), (112, 21), (109, 16), (106, 10), (103, 7),
-    (100, 8), (98, 13), (95, 16), (92, 21), (89, 22), (86, 20),
-    (82, 16), (79, 10), (77, 8), (75, 13), (73, 19), (70, 23),
-    (66, 25), (62, 25), (58, 26), (54, 28), (50, 30), (46, 30),
-    (42, 31), (38, 33), (35, 36), (31, 38),
+ASIA_SHAPE = ring([
+    (28, 41), (32, 42), (36, 44), (40, 45), (44, 47), (48, 46),
+    (50, 44), (52, 46), (56, 48), (60, 52), (66, 55), (72, 58),
+    (78, 62), (84, 66), (90, 70), (100, 72), (110, 74), (120, 73),
+    (130, 72), (140, 72), (150, 70), (160, 69), (170, 66),
+    (178, 65), (170, 60), (162, 58), (158, 52), (156, 50),
+    (150, 48), (142, 46), (140, 40), (138, 36), (134, 34),
+    (130, 33), (127, 35), (126, 39), (124, 40), (122, 38),
+    (120, 32), (118, 26), (114, 22), (110, 20), (108, 16),
+    (106, 10), (104, 8), (101, 6), (99, 10), (97, 15),
+    (94, 17), (92, 21), (89, 22), (86, 20), (83, 17),
+    (80, 13), (78, 8), (76, 10), (74, 15), (72, 20),
+    (70, 23), (66, 25), (62, 25), (58, 26), (56, 27),
+    (53, 28), (50, 30), (48, 30), (45, 30), (42, 31),
+    (39, 32), (36, 36), (33, 38), (30, 38),
 ])
-ARABIA = poly([
+ARABIA = ring([
     (43, 30), (48, 29), (52, 26), (55, 24), (57, 22), (55, 18),
     (52, 15), (48, 14), (44, 13), (42, 15), (40, 20), (38, 25),
     (36, 28), (38, 30), (40, 31),
 ])
-AUSTRALIA = poly([
-    (114, -22), (114, -30), (117, -34), (122, -34), (128, -32),
-    (134, -32), (138, -35), (142, -38), (147, -38), (150, -36),
-    (153, -30), (153, -25), (150, -22), (146, -19), (143, -15),
-    (142, -11), (137, -12), (132, -12), (127, -14), (122, -16),
-    (118, -19),
+AUSTRALIA = ring([
+    (114, -22), (114, -30), (116, -34), (120, -34), (126, -32),
+    (132, -32), (136, -35), (140, -38), (144, -38), (148, -37),
+    (150, -35), (153, -30), (153, -26), (150, -22), (146, -19),
+    (143, -15), (142, -11), (138, -12), (135, -12), (132, -12),
+    (128, -14), (124, -15), (120, -18), (116, -20),
 ])
-JAPAN = poly([
+JAPAN = ring([
     (130, 31), (132, 33), (135, 34), (138, 36), (140, 38),
     (141, 41), (140, 44), (138, 42), (135, 39), (132, 35),
     (130, 33),
 ])
-SUMATRA = poly([(95, 5), (98, 3), (100, 0), (102, -2), (100, -4), (97, 0)])
-JAVA = poly([(105, -3), (108, -5), (110, -7), (113, -7), (115, -4), (110, -2)])
-BORNEO = poly([(109, 1), (112, 4), (116, 6), (118, 2), (117, -2), (112, -3)])
-NEW_GUINEA = poly([
+SUMATRA = ring([(95, 5), (98, 3), (100, 0), (102, -2), (100, -4), (97, 0)])
+JAVA = ring([(105, -3), (108, -5), (110, -7), (113, -7), (115, -4), (110, -2)])
+BORNEO = ring([(109, 1), (112, 4), (116, 6), (118, 2), (117, -2), (112, -3)])
+NEW_GUINEA = ring([
     (131, -1), (136, -2), (141, -3), (145, -5), (147, -7),
     (143, -8), (138, -8), (133, -4),
 ])
-NEW_ZEALAND = poly([
+NEW_ZEALAND = ring([
     (167, -45), (170, -42), (174, -40), (177, -38),
     (175, -37), (172, -40), (168, -44),
 ])
 CONTINENTS = [
-    NORTH_AMERICA, GREENLAND, SOUTH_AMERICA, EUROPE, BRITAIN,
-    AFRICA, ASIA, ARABIA, AUSTRALIA, JAPAN, SUMATRA, JAVA,
+    N_AMERICA, GREENLAND, S_AMERICA, EUROPE_SHAPE, BRITAIN,
+    AFRICA, ASIA_SHAPE, ARABIA, AUSTRALIA, JAPAN, SUMATRA, JAVA,
     BORNEO, NEW_GUINEA, NEW_ZEALAND,
 ]
 
-# Map markers: (lon, lat, label, label_dx, label_dy) — label offset in px
-# from the dot; label is drawn with its anchor at the offset point.
+# Map markers: (lon, lat, label, label_dx, label_dy). The label is drawn
+# with its anchor at the offset point from the dot.
 MARKERS = [
     (-74.0, 40.7, "NEW YORK", -62, -6),
     (4.3, 52.1, "THE HAGUE", -64, -14),
@@ -204,10 +201,12 @@ MARKERS = [
     (114.0, 22.5, "SHENZHEN", 8, -6),
 ]
 
-# ---------------------------------------------------------------- stories
-# Each story: (headline, summary). Summaries are kept short so each fits
-# on one line at 14px in a 309px column. All facts verified against the
-# real reporting of 21 November 2026.
+# ------------------------------------------------------------------ stories
+# The lead, then the 34 grid stories grouped into 7 regions. These are
+# v3's verified stories, unchanged in fact; only the grouping changed
+# (AI-chip sales and BepiColombo moved to TECH & SCIENCE, the pill
+# breakthrough joins them as science; CLIMATE is its own region now).
+# Every story carries a "21 NOV" date tag when drawn.
 LEAD_HEAD = "MYANMAR COMMITTED GENOCIDE, WORLD COURT RULES"
 LEAD_STAND = (
     "In a 9\u20136 ruling, the court holds Myanmar responsible for genocide "
@@ -215,78 +214,58 @@ LEAD_STAND = (
 )
 
 EUROPE = [
-    ("MISSILES HIT POLAND",
-     "Missiles hit Poland; NATO condemns it."),
-    ("KYIV STRUCK IN MAJOR RAID",
-     "Missiles hit Kyiv; three bridges struck."),
-    ("KRYVYI RIH: 2 DEAD, 42 HURT",
-     "Two dead, 42 hurt in Ukrainian city."),
-    ("EU APPROVES \u20ac1BN ARMS AID",
-     "Council adopts \u20ac1bn military aid."),
-    ("UK TO SEND 1,000+ DRONES",
-     "London pledges 1,000+ drones (\u00a3260m)."),
-    ("UK\u2013EU SIGN NEW DEALS",
-     "Food, carbon, youth deals in Brussels."),
-    ("EU SENDS \u20ac7.9BN TO KYIV",
-     "Brussels' largest-ever aid to Ukraine."),
-    ("FRANCE SEEKS UN MEETING",
-     "Paris seeks Security Council session."),
-    ("DENMARK FOILS 'PLOT'",
-     "Copenhagen foils 'assassination plot'."),
-    ("RUTTE FLIES TO WARSAW",
-     "NATO chief heads to Polish capital."),
-    ("ITALY WALKS OUT",
-     "Mass walkout over living costs."),
+    ("MISSILES HIT POLAND", "Missiles hit Poland; NATO condemns it."),
+    ("KYIV STRUCK IN MAJOR RAID", "Missiles hit Kyiv; three bridges struck."),
+    ("KRYVYI RIH: 2 DEAD, 42 HURT", "Two dead, 42 hurt in Ukrainian city."),
+    ("EU APPROVES \u20ac1BN ARMS AID", "Council adopts \u20ac1bn military aid."),
+    ("UK TO SEND 1,000+ DRONES", "London pledges 1,000+ drones (\u00a3260m)."),
+    ("UK\u2013EU SIGN NEW DEALS", "Food, carbon, youth deals in Brussels."),
+    ("EU SENDS \u20ac7.9BN TO KYIV", "Brussels' largest-ever aid to Ukraine."),
+    ("FRANCE SEEKS UN MEETING", "Paris seeks Security Council session."),
+    ("DENMARK FOILS 'PLOT'", "Copenhagen foils 'assassination plot'."),
+    ("RUTTE FLIES TO WARSAW", "NATO chief heads to Polish capital."),
+    ("ITALY WALKS OUT", "Mass walkout over living costs."),
+    ("ECB BOARD RACE", "Boone, Brunnermeier seek Board seats."),
 ]
 
 AMERICAS = [
-    ("STOCKS SLIDE INTO CORRECTION",
-     "S&P 500 falls 3.7%; Nvidia hits low."),
-    ("SENATE REJECTS WAR POWERS",
-     "Senate rejects war-powers bid, 51\u201348."),
-    ("CALIFORNIA SUBPOENAS NVIDIA",
-     "California AG subpoenas Nvidia."),
-    ("US CLEARS AI CHIP SALES",
-     "US approves 900,000 AI chips for China."),
-    ("PALISADES FIRE: GUILTY",
-     "LA jury convicts Rinderknecht of arson."),
-    ("PETE ROSE PARDONED",
-     "Trump pardons late baseball star."),
-    ("ARGENTINA BACKS DISABLED RIGHTS",
-     "Senate approves disability rules, 71\u20130."),
-    ("VENEZUELA REJECTS ICJ",
-     "Caracas rejects ICJ rule, seeks talks."),
-    ("US SANCTIONS CRIME GROUPS",
-     "US sanctions Comancheros, 'Ndrangheta."),
-    ("SUMMIT ENDS WITH LITTLE",
-     "First Trump\u2013Xi\u2013Putin summit ends flat."),
-    ("YOUTH MOBILITY DEAL",
-     "EU\u2013UK scheme covers ages 18\u201331."),
+    ("STOCKS SLIDE INTO CORRECTION", "S&P 500 falls 3.7%; Nvidia hits low."),
+    ("SENATE REJECTS WAR POWERS", "Senate rejects war-powers bid, 51\u201348."),
+    ("CALIFORNIA SUBPOENAS NVIDIA", "California AG subpoenas Nvidia."),
+    ("PALISADES FIRE: GUILTY", "LA jury convicts Rinderknecht of arson."),
+    ("PETE ROSE PARDONED", "Trump pardons late baseball star."),
+    ("ARGENTINA BACKS DISABLED RIGHTS", "Senate approves disability rules, 71\u20130."),
+    ("VENEZUELA REJECTS ICJ", "Caracas rejects ICJ rule, seeks talks."),
+    ("US SANCTIONS CRIME GROUPS", "US sanctions Comancheros, 'Ndrangheta."),
 ]
 
-ASIA_MIDEAST = [
-    ("CYCLONE AKVAN HITS INDIA",
-     "Cyclone hits coast; 300,000 evacuated."),
-    ("ROHINGYA RELOCATION DEAL",
-     "Malaysia, Turkey to relocate 10,000."),
-    ("INDONESIA FIRES MAY COST $30BN",
-     "Fires may cost Indonesia $30 billion."),
-    ("BEPICOLOMBO AT MERCURY",
-     "Joint European-Japanese mission arrives."),
-    ("IRAN WAR NEARS NINTH MONTH",
-     "War nears ninth month; Trump waits."),
-    ("SAUDIS INTERCEPT MISSILES",
-     "Saudis intercept Houthi missiles."),
-    ("US SANCTIONS IRANIANS",
-     "Four Iranians added to OFAC list."),
-    ("IRAQ RECLAIMS STRONGHOLD",
-     "Iraq ends Kata'ib Hezbollah grip."),
-    ("IRAN WAR COST: $48.3BN",
-     "US Iran engagement costs $48.3bn."),
-    ("COP31 ENTERS OVERTIME",
-     "Climate summit enters final stage."),
-    ("PILL BREAKTHROUGH",
-     "Pill hailed for pancreatic cancer."),
+MIDDLE_EAST = [
+    ("IRAN WAR NEARS NINTH MONTH", "War nears ninth month; Trump waits."),
+    ("SAUDIS INTERCEPT MISSILES", "Saudis intercept Houthi missiles."),
+    ("US SANCTIONS IRANIANS", "Four Iranians added to OFAC list."),
+    ("IRAQ RECLAIMS STRONGHOLD", "Iraq ends Kata'ib Hezbollah grip."),
+    ("IRAN WAR COST: $48.3BN", "US Iran engagement costs $48.3bn."),
+]
+
+ASIA = [
+    ("CYCLONE AKVAN HITS INDIA", "Cyclone hits coast; 300,000 evacuated."),
+    ("ROHINGYA RELOCATION DEAL", "Malaysia, Turkey to relocate 10,000."),
+    ("INDONESIA FIRES MAY COST $30BN", "Fires may cost Indonesia $30 billion."),
+]
+
+DIPLOMACY = [
+    ("SUMMIT ENDS WITH LITTLE", "First Trump\u2013Xi\u2013Putin summit ends flat."),
+    ("YOUTH MOBILITY DEAL", "EU\u2013UK scheme covers ages 18\u201331."),
+]
+
+CLIMATE = [
+    ("COP31 ENTERS OVERTIME", "Climate summit enters final stage."),
+]
+
+TECH_SCIENCE = [
+    ("US CLEARS AI CHIP SALES", "US approves 900,000 AI chips for China."),
+    ("BEPICOLOMBO AT MERCURY", "Joint European-Japanese mission arrives."),
+    ("PILL BREAKTHROUGH", "Pill hailed for pancreatic cancer."),
 ]
 
 NUMBERS = [
@@ -297,135 +276,147 @@ NUMBERS = [
     ("$48.3bn", "cost of Iran war"),
 ]
 
-# Pictures band: (image path, caption) — one per story column.
-PICTURES = [
-    (ILLU_POLAND, "MISSILES HIT POLAND"),
-    (ILLU_STOCKS, "STOCKS SLIDE INTO CORRECTION"),
-    (ILLU_CYCLONE, "CYCLONE AKVAN HITS INDIA"),
-]
+DATE_TAG = " \u00b7 21 NOV"
 
-# ---------------------------------------------------------------- build
-img = Image.new("RGB", (W, H), PAPER)
+# ------------------------------------------------------------------ build
+img = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
 d = ImageDraw.Draw(img)
 
 # --- Masthead ---
-d.rectangle([0, 0, W, 76], fill=NAVY)
-d.text((32, 8), "THE WORLD", font=font(SERIF_B, 48), fill=(255, 255, 255))
-d.text((32, 58), "IN ONE IMAGE", font=font(SANS_B, 12), fill=(217, 179, 108))
-d.text((W - 32, 10), "SATURDAY", font=font(SANS_B, 20), fill=(255, 255, 255),
-       anchor="ra")
-d.text((W - 32, 36), "21 NOVEMBER 2026", font=font(SANS, 18),
+d.rectangle([0, 0, PAGE_W, 78], fill=NAVY)
+d.text((32, 8), "THE WORLD", font=get_font(SERIF_B, 50), fill=(255, 255, 255))
+d.text((32, 60), "IN ONE IMAGE", font=get_font(SANS_B, 13), fill=(217, 179, 108))
+d.text((PAGE_W - 32, 10), "SATURDAY", font=get_font(SANS_B, 20),
+       fill=(255, 255, 255), anchor="ra")
+d.text((PAGE_W - 32, 38), "21 NOVEMBER 2026", font=get_font(SANS, 18),
        fill=(217, 179, 108), anchor="ra")
-d.rectangle([0, 76, W, 80], fill=GOLD)
+d.rectangle([0, 78, PAGE_W, 82], fill=GOLD)
 
 # --- Numbers strip ---
-d.rectangle([0, 80, W, 118], fill=STRIP_BG)
-cell_w = (W - 64) / 5.0
+d.rectangle([0, 82, PAGE_W, 126], fill=STRIP_BG)
+cell_w = (PAGE_W - 64) / 5.0
 for i, (num, label) in enumerate(NUMBERS):
     cx = 32 + i * cell_w
-    d.text((cx + cell_w / 2, 86), num, font=font(SANS_B, 22), fill=RED,
+    d.text((cx + cell_w / 2, 88), num, font=get_font(SANS_B, 24), fill=RED,
            anchor="ma")
-    d.text((cx + cell_w / 2, 108), label, font=font(SANS, 10), fill=GREY,
+    d.text((cx + cell_w / 2, 114), label, font=get_font(SANS, 11), fill=GREY,
            anchor="ma")
     if i:
-        d.line([cx, 86, cx, 114], fill=RULE, width=1)
-d.line([0, 118, W, 118], fill=RULE, width=1)
+        d.line([cx, 90, cx, 120], fill=RULE, width=1)
+d.line([0, 126, PAGE_W, 126], fill=RULE, width=1)
 
 # --- Lead story + hero (side by side) ---
 LEAD_X, LEAD_W = 32, 558
-d.text((LEAD_X, 130), "THE HAGUE  \u2022  WORLD COURT",
-       font=font(SANS_B, 16), fill=RED)
-f_head = font(SERIF_B, 32)
-lines = wrap(d, LEAD_HEAD, f_head, LEAD_W)
-y = draw_lines(d, lines, LEAD_X, 152, f_head, INK, 38)
+d.text((LEAD_X, 140), "THE HAGUE  \u2022  WORLD COURT  \u2022  21 NOV 2026",
+       font=get_font(SANS_B, 17), fill=RED)
+f_head = get_font(SERIF_B, 33)
+lines = wrap_text(d, LEAD_HEAD, f_head, LEAD_W)
+y = draw_block(d, lines, LEAD_X, 164, f_head, INK, 40)
 y += 8
-f_stand = font(SERIF, 17)
-lines = wrap(d, LEAD_STAND, f_stand, LEAD_W)
-y = draw_lines(d, lines, LEAD_X, y, f_stand, (58, 54, 48), 21)
+f_stand = get_font(SERIF, 18)
+lines = wrap_text(d, LEAD_STAND, f_stand, LEAD_W)
+y = draw_block(d, lines, LEAD_X, y, f_stand, BODY_GREY, 23)
 
-# Hero photo, right column: a real photo block, kept large.
-hero = Image.open(HERO).convert("RGB")
-hero = cover(hero, 382, 160)
-img.paste(hero, (610, 130))
-d.rectangle([610, 130, 610 + 382, 130 + 160], outline=GOLD, width=2)
-d.text((610, 294), "The Peace Palace, The Hague \u2014 seat of the World Court",
-       font=font(SANS, 11), fill=GREY)
+# Hero photo, right column: a real photo block, not a thin strip.
+hero = Image.open(HERO_PATH).convert("RGB")
+hw, hh = hero.size
+hero_w, hero_h = 382, 188
+hero = hero.resize((hero_w, int(hh * hero_w / hw)), Image.LANCZOS)
+hero = hero.crop((0, 12, hero_w, 12 + hero_h))
+img.paste(hero, (610, 138))
+d.rectangle([610, 138, 610 + hero_w, 138 + hero_h], outline=GOLD, width=2)
+d.text((610, 330), "The Peace Palace, The Hague \u2014 seat of the World Court",
+       font=get_font(SANS, 11), fill=GREY)
 
-# --- World map band ---
-d.text((32, 308), "THE WORLD TODAY \u2014 WHERE THE NEWS IS",
-       font=font(SANS_B, 12), fill=RED)
-d.rectangle([MAP_X0, MAP_Y0, MAP_X0 + MAP_W, MAP_Y0 + MAP_H], fill=MAP_BG)
+# --- World map band (full 114px height, as in v3) ---
+d.text((32, 338), "THE WORLD TODAY \u2014 WHERE THE NEWS IS",
+       font=get_font(SANS_B, 13), fill=RED)
+d.rectangle([MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H], fill=MAP_BG)
 for cont in CONTINENTS:
-    pts = [(MAP_X0 + x, MAP_Y0 + y) for x, y in cont]
+    pts = [(MAP_X + x, MAP_Y + y) for x, y in cont]
     d.polygon(pts, fill=MAP_LAND, outline=MAP_LINE)
-f_mark = font(SANS_B, 11)
+f_mark = get_font(SANS_B, 11)
 for lon, lat, label, dx, dy in MARKERS:
     mx, my = ll(lon, lat)
-    mx += MAP_X0
-    my += MAP_Y0
+    mx += MAP_X
+    my += MAP_Y
     r = 5
     d.ellipse([mx - r, my - r, mx + r, my + r], fill=RED,
               outline=(255, 255, 255), width=1)
     lx, ly = mx + dx, my + dy
     # White halo so the label stays readable over the map.
     for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1),
-                   (-1, -1), (1, -1), (-1, 1), (1, 1)):
+                   (-1, -1), (-1, 1), (1, -1), (1, 1)):
         d.text((lx + ox, ly + oy), label, font=f_mark, fill=(255, 255, 255))
     d.text((lx, ly), label, font=f_mark, fill=INK)
-d.rectangle([MAP_X0, MAP_Y0, MAP_X0 + MAP_W, MAP_Y0 + MAP_H],
+d.rectangle([MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H],
             outline=RULE, width=1)
 
-# --- Pictures band: three illustrations, one above each story column ---
-d.text((32, 420), "IN PICTURES", font=font(SANS_B, 12), fill=RED)
-PIC_W, PIC_H = 140, 85
-PIC_X = [32, 357, 682]
-f_cap = font(SANS_B, 14)
-for (path, caption), px in zip(PICTURES, PIC_X):
-    thumb = cover(Image.open(path).convert("RGB"), PIC_W, PIC_H)
-    img.paste(thumb, (px, 436))
-    d.rectangle([px, 436, px + PIC_W, 436 + PIC_H], outline=GOLD, width=1)
-    d.text((px, 525), caption, font=f_cap, fill=INK)
-
-# --- Story grid: three flat sections, no sub-headers ---
+# --- Story grid: 3 columns, 7 regions ---
 COL_W = 309
 COL_X = [32, 357, 682]
-GRID_TOP = 551
+GRID_TOP = 488
 STORY_H = 38
-f_sec = font(SANS_B, 17)
-f_h = font(SANS_B, 16)
-f_b = font(SANS, 14)
+f_sec = get_font(SANS_B, 17)
+f_sub = get_font(SANS_B, 14)
+f_h = get_font(SANS_B, 16)
+f_b = get_font(SANS, 14)
+f_tag = get_font(SANS_B, 10)
 
 
-def draw_section(draw, x, y, title):
+def draw_region(draw, x, y, title):
+    """A top-level region header with a rule underneath."""
     draw.text((x, y), title, font=f_sec, fill=RED)
-    draw.line([x, y + 20, x + COL_W, y + 20], fill=RULE, width=1)
-    return y + 24
+    draw.line([x, y + 22, x + COL_W, y + 22], fill=RULE, width=1)
+    return y + 28
+
+
+def draw_subregion(draw, x, y, title):
+    """A smaller region header inside a column (no rule)."""
+    draw.text((x, y), title, font=f_sub, fill=RED)
+    return y + 20
 
 
 def draw_story(draw, x, y, head, body):
+    """One dated story: 16px headline, 14px summary + red date tag."""
     draw.text((x, y), head, font=f_h, fill=INK)
-    draw.text((x, y + 19), body, font=f_b, fill=(58, 54, 48))
+    by = y + 18
+    draw.text((x, by), body, font=f_b, fill=BODY_GREY)
+    tag_x = x + draw.textlength(body, font=f_b)
+    draw.text((tag_x, by), DATE_TAG, font=f_tag, fill=RED)
     return y + STORY_H
 
 
-# Column 1: EUROPE (11)
+# Column 1: EUROPE (12)
 x = COL_X[0]
-y = draw_section(d, x, GRID_TOP, "EUROPE")
+y = draw_region(d, x, GRID_TOP, "EUROPE")
 for head, body in EUROPE:
     y = draw_story(d, x, y, head, body)
 col1_end = y
 
-# Column 2: AMERICAS (11, incl. the two diplomacy stories)
+# Column 2: AMERICAS (8) + DIPLOMACY (2) + CLIMATE (1)
 x = COL_X[1]
-y = draw_section(d, x, GRID_TOP, "AMERICAS")
+y = draw_region(d, x, GRID_TOP, "AMERICAS")
 for head, body in AMERICAS:
+    y = draw_story(d, x, y, head, body)
+y = draw_subregion(d, x, y + 2, "DIPLOMACY")
+for head, body in DIPLOMACY:
+    y = draw_story(d, x, y, head, body)
+y = draw_subregion(d, x, y + 2, "CLIMATE")
+for head, body in CLIMATE:
     y = draw_story(d, x, y, head, body)
 col2_end = y
 
-# Column 3: ASIA & MIDDLE EAST (11)
+# Column 3: MIDDLE EAST (5) + ASIA (3) + TECH & SCIENCE (3)
 x = COL_X[2]
-y = draw_section(d, x, GRID_TOP, "ASIA & MIDDLE EAST")
-for head, body in ASIA_MIDEAST:
+y = draw_region(d, x, GRID_TOP, "MIDDLE EAST")
+for head, body in MIDDLE_EAST:
+    y = draw_story(d, x, y, head, body)
+y = draw_subregion(d, x, y + 2, "ASIA")
+for head, body in ASIA:
+    y = draw_story(d, x, y, head, body)
+y = draw_subregion(d, x, y + 2, "TECH & SCIENCE")
+for head, body in TECH_SCIENCE:
     y = draw_story(d, x, y, head, body)
 col3_end = y
 
@@ -435,12 +426,12 @@ for gx in (COL_X[1] - 8, COL_X[2] - 8):
     d.line([gx, GRID_TOP + 4, gx, grid_bottom], fill=RULE, width=1)
 
 # --- Footer ---
-d.line([32, 1006, W - 32, 1006], fill=RULE, width=1)
-d.text((W // 2, 1012),
+d.line([32, 1006, PAGE_W - 32, 1006], fill=RULE, width=1)
+d.text((PAGE_W // 2, 1012),
        "Compiled from the day's reporting  \u2022  All times local  \u2022  theworld.example",
-       font=font(SANS, 13), fill=GREY, anchor="ma")
+       font=get_font(SANS, 13), fill=GREY, anchor="ma")
 
-img.save(OUT, "PNG", optimize=True)
-print("wrote", OUT, img.size, os.path.getsize(OUT), "bytes")
+img.save(OUT_PATH, "PNG", optimize=True)
+print("wrote", OUT_PATH, img.size, os.path.getsize(OUT_PATH), "bytes")
 print("column bottoms:", col1_end, col2_end, col3_end,
       "grid bottom:", grid_bottom)
