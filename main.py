@@ -1,15 +1,20 @@
-"""News-image entry: copy the front page to /output/entry.png.
+"""Deliver the finished front page to the grader's output folder.
 
-The image is entry.png beside this file. It is deterministic: the program
-writes the same bytes on every run, with no network access.
-Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+The image is entry.png beside this file. It is already rendered and
+fully deterministic, so this program only copies it into place: no
+drawing, no network access, no randomness. The grader reads
+/output/entry.png. Outside the grader container, point
+MAKEFUN_OUTPUT_DIR at a local directory instead:
   mkdir -p out && MAKEFUN_OUTPUT_DIR=out python3 main.py
 """
 import os
 import shutil
 
-OUTPUT_DIR = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.png")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SOURCE = os.path.join(HERE, "entry.png")
+DEST_DIR = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-shutil.copyfile(SOURCE, os.path.join(OUTPUT_DIR, "entry.png"))
+os.makedirs(DEST_DIR, exist_ok=True)
+dest = os.path.join(DEST_DIR, "entry.png")
+shutil.copyfile(SOURCE, dest)
+print("copied", SOURCE, "->", dest, os.path.getsize(dest), "bytes")
